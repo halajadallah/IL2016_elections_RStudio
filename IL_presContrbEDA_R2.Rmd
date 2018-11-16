@@ -1,0 +1,1991 @@
+---
+title: "Exploratory Data ANalysis of 2016 Presidential Election 
+Contributions in Illinois"
+author: "Hala Jadallah"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(plyr)
+library(dplyr)
+library(alr3)
+library(reshape2)
+library(gridExtra)
+library(stringr)
+library(maps)
+## I want ot print more lines than default of 10 rows
+options(tibble.print_max = 30, tibble.print_min = 20)
+options(tibble.width = Inf)
+#options(dplyr.print_min =24)  #Inf
+```
+
+## Introduction:
+
+In this report we perform an exploratory analysis of presidential elections contributions in Illinois, the state of my residence. For this purpose I downloaded three files:
+
+1) 2016 Presidential elections contributions raw data  from  
+<ftp://ftp.fec.gov/FEC/Presidential_Map/2016/DATA_DICTIONARIES/CONTRIBUTOR_FORMAT.txt>
+ in January 2018
+
+```{r loading the main data set,  echo = FALSE}
+load("IL_presContr.RData")
+str(IL.presContr)
+```
+
+Important variables in this data set are: candidate names,  contribution amount and date, contributor city, and election type.  
+
+I choose to ignore zip codes in this analysis and use cities to consider the spatial
+distribution of contributors.
+
+Therefore I download two other Illinois data sources. 
+
+2) 
+A list of IL cities and their population obtained from the Wikipedia page
+<https://en.wikipedia.org/wiki/List_of_municipalities_in_Illinois>
+```{r load IL city population data, echo=FALSE}
+# I wrote a python code to read the data from webpage into csv file
+#The following code is precessing in R
+#IL_city_temp = read.csv("illinois_cities_fixed2.csv",header=T, sep=',')
+# there was an empty line betweet two entries
+#IL_city = IL_city_temp[seq(2,2764,2),]
+#IL_city[,1] = sub('â???','',IL_city[,1]) #remving symbols-county seats
+#IL_city[,1] = str_trim(IL_city[,1])
+#IL_city[grep('Springfield',IL_city[,1]),1] <- 'Springfield' #capital 
+##Most Saint is writen as St. from the IL_city table
+#IL_city[,1] = sub('St\\.','Saint',IL_city[,1])
+#IL_city[,4] = sub('St\\.','Saint',IL_city[,4])
+#save(IL_city, file="IL_city.RData")
+
+load("IL_city.RData")
+```
+
+3) location coordinated of Illinois cities obtained from <https://www.mapsofworld.com/usa/states/illinois/lat-long.html>
+
+Now we load the data and join the last two files based on location name and  type: city, village, town or unincorporated.  
+```{r echo=FALSE}
+#load IL city longitudinal and latitude coordinates
+load("IL_city_lonlat.RData")
+
+#my goal  is to join the coordinates with the city population by city name 
+# first I rename the first column to be city
+
+names(IL_city_lonlat) <- c('city', 'latitude', 'longitude')
+
+# In this dataset, the name is followed by it's type as 
+# one character variable therefore I create a type column 
+# as (village, city or town)
+
+IL_city_lonlat$type <- character(length(IL_city_lonlat$city))
+IL_city_lonlat$type[grep(' village', 
+                         IL_city_lonlat$city)] <- 'Village'
+IL_city_lonlat$type[grep(' city',
+                         IL_city_lonlat$city)] <- 'City'
+IL_city_lonlat$type[grep(' town',
+                         IL_city_lonlat$city)] <- 'Town'
+
+# locations that are neither village, city or town are considered 
+# unincorporated populated places
+
+cat('The number of unincorporated populated locations is: ', 
+    sum(IL_city_lonlat$type == ''))
+
+
+# now we remove village, city or town next to city name since 
+# it is recorded under type.
+
+IL_city_lonlat$city <- sub(' village| city| town','',IL_city_lonlat$city)
+
+# I also need to replase all St. with Saint
+IL_city_lonlat$city <- sub("St\\.","Saint", IL_city_lonlat$city)
+
+#It turns out that each set has differencet spelling for 
+#DeWitt/De Witt and  Gulfport/ Gulf port 
+#so I will match these here 
+#assuming Wiki is correct only because I started with this data set. 
+IL_city_lonlat$city <- sub("De Witt", "DeWitt", IL_city_lonlat$city)
+IL_city_lonlat$city <- sub("Gulf Port", "Gulfport", IL_city_lonlat$city)
+
+# I have to make the dicision that I will only consider places 
+# with municipalities, the ones in IL_city
+# there fore I will take out places of type=""
+IL_city_lonlat <- IL_city_lonlat[!(IL_city_lonlat$type== ""),]
+#head(IL_city_lonlat)
+
+```
+
+We merge city population type longitude and latitude for most of Illinois cities. 
+
+```{r merging  IL_city and IL_city_lonlat dataframes, echo =FALSE}
+
+#I tried the join functioin , but if I left join  it NAs the longitudinal
+# and latitdue variables
+# if I right join it NAs the population and county.
+# On the other hand, merge keep all column values apon merging. 
+# sl stands for size and location
+IL_city_sl <- merge(IL_city, IL_city_lonlat,
+                    by = c('city','type'),all.x = T)
+head(IL_city_sl)
+
+# I want to plot the map of illinois with all the cities
+# here I load the coord of the state boundaries
+map_IL <- map_data("state",region = "IL")
+```
+
+
+Here is a view of the cities on Illinois map. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# plotting a map showing all cities in Illinois.
+ggplot(data=IL_city_sl, aes(x=longitude, y=latitude))+ geom_point(alpha=0.3, size=.6)+coord_map()+ geom_path( data=map_IL, aes(x=long, y=lat))
+
+```
+
+Many cities in the contributions data set are misspelled, so I had to capture 
+them and correct them as much as possible. In doing so, I realized that the data
+of contributions has three types of cities or places. First, places with municipalities, these are categorized as cities, villages and towns by the state. 
+Second, there are cities that are considered unincorporated populated areas.
+Presumably, they have low count of people, and there is no solid population count 
+that I could find tabulated. 
+Third, there are cities that do not lie in Illinois. There are either in other
+states or they are in foreign countries. 
+
+
+```{r city munging, echo=FALSE }
+# I used grep() to find out error 
+contb_city = str_trim(IL.presContr$contbr_city)
+contb_city_corr = sub(' HTS$',' HEIGHTS',contb_city)
+contb_city_corr = sub(' HTS\\.$',' HEIGHTS',contb_city)
+contb_city_corr = sub(' PK$',' PARK',contb_city_corr)
+contb_city_corr = sub(' PK\\.$',' PARK',contb_city_corr)
+contb_city_corr = sub('MT ','MOUNT ',contb_city_corr)
+contb_city_corr = sub('MT\\. ','MOUNT ',contb_city_corr)
+contb_city_corr = sub(' EST$',' ESTATES',contb_city_corr)
+contb_city_corr = sub('N\\. |^N ','NORTH ',contb_city_corr)
+contb_city_corr = sub('^ST\\. | ST\\. ','SAINT ',contb_city_corr)
+contb_city_corr = sub('^ST ','SAINT ',contb_city_corr)
+contb_city_corr = sub('MT\\.','MOUNT ',contb_city_corr)
+contb_city_corr = sub('ST\\.','SAINT ',contb_city_corr)
+contb_city_corr = sub('^S\\. |^S ','SOUTH ',contb_city_corr)
+contb_city_corr = sub('\\s[A-Z]{1}\\s','',contb_city_corr)
+contb_city_corr = sub('[0-9]{2,}','',contb_city_corr)
+## "0LMSTED" "M0RRIS" had zero instead of 'O'
+contb_city_corr = sub('[0-9]{1,}','O',contb_city_corr)  
+contb_city_corr = sub('IL\\.$| IL$','',contb_city_corr)
+contb_city_corr = sub(',','',contb_city_corr)
+contb_city_corr = sub("CHICAGO ILLINOIS",'CHICAGO',contb_city_corr)
+contb_city_corr = 
+  gsub("CHGO|CHIOCAGO|CNICAGO|CHIOCAGO|CHCIAGO",'CHICAGO',
+       contb_city_corr)
+contb_city_corr = sub('\\s\\s',' ',contb_city_corr)
+contb_city_corr = sub('EASR','EAST',contb_city_corr)
+contb_city_corr = sub('^E |^E\\. |^E\\.','EAST',contb_city_corr)
+contb_city_corr = sub('^W |^W\\. ','WEST',contb_city_corr)
+contb_city_corr = sub('^S |^S\\. ','SOUTH',contb_city_corr)
+contb_city_corr = sub('^N |^N\\. ','NORTH',contb_city_corr)
+contb_city_corr = sub('CAHRLES','CHARLES',contb_city_corr)
+contb_city_corr = sub('STAINT','SAINT',contb_city_corr)
+contb_city_corr = sub("STCHARLES",'SAINT CHARLES',
+                      contb_city_corr)
+
+contb_city_corr = sub("BOLINBROOK|BOLING BROOK", 
+                      "BOLINGBROOK",contb_city_corr)
+contb_city_corr = sub("BURR RIDGES", "BURR RIDGE", 
+                      contb_city_corr)
+contb_city_corr = sub("BUFALO GROVE", "BUFFALO GROVE", 
+                      contb_city_corr)
+contb_city_corr = sub("BUTBANK", "BURBANK", 
+                      contb_city_corr)
+contb_city_corr = sub("CAMPAIGN", "CHAMPAIGN",
+                      contb_city_corr)
+contb_city_corr = sub("CARBON DALE", "CARBONDALE",
+                      contb_city_corr)
+contb_city_corr = sub("CARMEL", "MOUNT CARMEL", 
+                      contb_city_corr)
+contb_city_corr = sub("CHICAG O|CHAICGO|CHICAGI|CHICGO",
+                      "CHICAGO", contb_city_corr)
+contb_city_corr = sub("EASTSAINT LOUIS", "EAST SINT LOUIS",
+                      contb_city_corr)
+contb_city_corr = sub("DE KALB", "DEKALB", contb_city_corr)
+contb_city_corr = sub("DESOTO", "DE SOTO", contb_city_corr)
+contb_city_corr = sub("DECATUIR", "DECATUR", contb_city_corr)
+contb_city_corr = sub("DESPLAINES|DES PLANIES", "DES PLAINES",
+                      contb_city_corr)
+contb_city_corr = sub("DOWNERS GROBE|DOWNERS. GROVE", 
+                      "DOWNERS GROVE", contb_city_corr)
+contb_city_corr = sub("EASTSAINT LOUISE", "EAST SAINT LOUISE",
+                      contb_city_corr)
+contb_city_corr = sub("EDWARDSVIILE", "EDWARDSVILLE", 
+                      contb_city_corr)
+contb_city_corr = sub("ELK GROVE$|ELK GROVE VLG$|ELKGROVE$", 
+                      "ELK GROVE VILLAGE", contb_city_corr)
+contb_city_corr = sub("ELMHUTST|EMHURST", "ELMHURST", contb_city_corr)
+contb_city_corr = sub("EL DORADO", "ELDORADO", contb_city_corr)
+contb_city_corr = sub("EMOLINE", "EAST MOLINE", contb_city_corr)
+contb_city_corr = sub("EVANSVILLLE", "EVANSVILLE", contb_city_corr)
+contb_city_corr = sub("GLENDALE HEIG|GLENDALE HEIG", 
+                      "GLENDALE HEIGHTS", contb_city_corr)
+contb_city_corr = sub("HAWRHORN WOODS", "HAWRTHORN WOODS",
+                      contb_city_corr)
+contb_city_corr = sub("HIGHLAND PARK IL ", "HIGHLAND PARK",
+                      contb_city_corr)
+contb_city_corr = sub("HOMRGLEN", "HOMER GLEN", contb_city_corr)
+contb_city_corr = sub("JOHNSON", "JOHNSTON CITY", contb_city_corr)
+contb_city_corr = sub("JOILET", "JOLIET", contb_city_corr)
+contb_city_corr = sub("LAGRANGE", "LA GRANGE", contb_city_corr)
+contb_city_corr = sub("LAKEFOREST|LAKE FOREWST", "LAKE FOREST",
+                      contb_city_corr)
+contb_city_corr = sub("LAKR VILLA", "LAKE VILLA", contb_city_corr)
+contb_city_corr = sub("LAHARPE", "LA HARPE", contb_city_corr)
+contb_city_corr = sub("LEROY", "LE ROY", contb_city_corr)
+contb_city_corr = sub("LIBERTTYVILLE|LIVERTYVILLE", "LIBERTYVILLE",
+                      contb_city_corr)
+contb_city_corr = sub("LISL$|LISLR$", "LISLE", contb_city_corr)
+contb_city_corr = sub("LK IN THE HLS", "LAKE IN THE HILLS", 
+                      contb_city_corr)
+contb_city_corr = sub("LK BARRINGTON", "LAKE BARRINGTON", 
+                      contb_city_corr)
+contb_city_corr = sub("MC ", "MC", contb_city_corr)
+contb_city_corr = sub("CARMEI", "CARMEL", contb_city_corr)
+contb_city_corr = sub("PROSPEC", "PROSPECT", contb_city_corr)
+contb_city_corr = sub("MY\\. ", "MOUNT ", contb_city_corr)
+contb_city_corr = sub("NAPPERVILE|NAROERVILLE|NPERVILLE", 
+                      "NAPERVILLE", contb_city_corr)
+contb_city_corr = sub("NEW LENOXI|NEW LENOX IL", "NEW LENOX", 
+                      contb_city_corr)
+contb_city_corr = sub("BETLIN", "BERLIN", contb_city_corr)
+contb_city_corr = sub("NROTHFIELD", "NORTHFIELD", contb_city_corr)
+contb_city_corr = sub("FREST|FPREST", "FOREST", contb_city_corr)
+contb_city_corr = sub("PARKRIDGE", "PART RIDGE", contb_city_corr)
+contb_city_corr = sub("PAWANEE", "PAWNEE", contb_city_corr)
+contb_city_corr = sub("PEORA|PEORIS|PEOIRA|PEORIAQ", "PEORIA",
+                      contb_city_corr)
+contb_city_corr = sub("PLAINSFIELD", "PLAINFIELD", contb_city_corr)
+contb_city_corr = sub("PROSPEVTHEIGHTS", "PROSPECT HEIGHTS",
+                      contb_city_corr)
+contb_city_corr = sub(" AFB", " AIR FORSE  BASE", contb_city_corr)
+contb_city_corr = sub("SILVBIS", "SILVIS", contb_city_corr)
+contb_city_corr = sub("SLMPSON", "SIMPSON", contb_city_corr)
+contb_city_corr = sub("SPRNGFIELD|SORINGFIELD", "SPRINGFIELD",
+                      contb_city_corr)
+contb_city_corr = sub("SOUTH HOLLANDER", "SOUTH HOLLAND", contb_city_corr)
+contb_city_corr = sub("OFALLON|O FALLON", "O'FALLON", contb_city_corr)
+contb_city_corr = sub("OAKBROOK|OAKBROOM|OAKBOOKE", "OAK BROOK", 
+                      contb_city_corr)
+contb_city_corr = sub(" TERR$", " TERRACE", contb_city_corr)
+contb_city_corr = sub("ORELAND", "ORLAND", contb_city_corr)
+contb_city_corr = sub("QUIMCY|QUNICY|QUNCY", "QUINCY", contb_city_corr)
+contb_city_corr = sub("RIXHMOND", "RICHMOND", contb_city_corr)
+contb_city_corr = sub(" MDWS$", " MEADOWS", contb_city_corr)
+contb_city_corr = sub("ROUND LAKE BCH", "ROUND LAKE BEACH",
+                      contb_city_corr)
+
+```
+
+
+```{r city population, echo = FALSE }
+
+#My goal now is to associate each city in the presidential 
+#contribution data set with its population (according to 2010 census). 
+
+
+# remove commas from numbers e.g.  2,340,651
+IL_city_sl$population <- gsub(',','',IL_city_sl$population)
+
+#merging the two dataset,
+# merge command failed so I used a for loop
+# Each city in the IL.preContr dataset is matched with 
+# population, type, county.
+# the variable incl acounts for cities that are not matched
+
+L = 250411 #length(contb_city_corr)
+
+incl = character(L)
+popl = integer(L)
+county = character(L)
+type = character(L)
+lon = integer(L)
+lat = integer(L)
+N= dim(IL_city_sl)[1]
+for(i in 1:N){
+    city = toupper(IL_city_sl$city[i])
+    typeT = as.character(IL_city_sl$type[i])
+    countyT = as.character(IL_city_sl$county[i])	
+    incl[contb_city_corr == city] = 'incorporated'
+    popl[contb_city_corr == city] = as.integer(IL_city_sl$population[i])
+    type[contb_city_corr == city] = typeT
+    county[contb_city_corr == city] = countyT	
+    lon[contb_city_corr == city] = IL_city_sl$longitude[i]
+    lat[contb_city_corr == city] = IL_city_sl$latitude[i]
+}
+
+rm(countyT, typeT)
+rm(contb_city)
+contb_city <- data.frame(
+  city = contb_city_corr, type , population = popl, incl, county, lon, lat)
+
+#head(contb_city,5)
+```
+
+
+
+
+# Exploration of presidential contributions
+
+First we  list candidates with the number of contributions.
+
+The  count of contributions here includes refunds and some non-unique contributors.
+
+```{r counts of contributions or refunds per candidate}
+print(count(IL.presContr,cand_nm), n=24, width=Inf)
+```
+
+Observe that number of contributions to the 24 candidates are at different order of magnitude. 
+
+Its easier to refer to candidates by their last names. Therefore I create a variable for each candidate's last name, a variable for the candidate's party, and another for candidate's gender. 
+
+```{r candidates: last names, abrev_tions, party, echo= FALSE}
+# candidate last names
+L=dim(IL.presContr)[1]
+cand_last_nm = character(0)
+cand_last_nm_temp = strsplit(as.character(IL.presContr$cand_nm),',')
+for(i in 1:L){cand_last_nm[i] = cand_last_nm_temp[[i]][1]}
+
+# Before I found out how to get the x-tick prited veritcally,
+# I needed to shorten cand last names. So I spent time on this
+
+# Candidate name abreviation using first two letters of last name
+#cand_nm_abv <- substr(cand_last_nm,1,2)
+
+
+# candidate name abreviation using the initials of first and last names.
+#cand_nm_int = character(L)
+#for(k in 1:L){
+#  nmT <- strsplit(as.character(IL.presContr$cand_nm[k]),',')
+#  nmT <- str_trim(nmT[[1]])
+#  cand_nm_int[k] <- paste(substr(nmT[2],1, 1), substr(nmT[1],1,1),sep='')
+#}
+
+#levels(factor(as.character(cand_last_nm)))
+
+#generate party column by mapping
+cand_party = character(250411)
+cand_party_match = c( Bush = 'Republican',  Carson = 'Republican', 
+                      Christie = 'Republican', Clinton = 'Democrat', 
+                      Cruz = 'Republican', Fiorina = 'Republican', 
+                      Graham = 'Republican', Huckabee = 'Republican', 
+                      Jindal = 'Republican', Johnson = 'Liberterian', 
+                      Kasich = 'Republican', Lessig = 'Democrat', 
+                      McMullin ='Independent', OMalley = 'Democrat', 
+                      Pataki = 'Republican', Paul = 'Republican', 
+                      Perry = 'Republican', Rubio = 'Republican', 
+                      Sanders = 'Democrat', Santorum = 'Republican', 
+                      Stein = 'Green', Trump = 'Republican', 
+                      Walker = 'Republican', Webb = 'Democrat')
+
+cand_party = cand_party_match[cand_last_nm]
+# check for NAs. 
+#sum(is.na(cand_party))
+
+# I did not know how to handle O'Malley with the apostrophe
+# So I expected I need to handle this case separately
+#cand_last_nm[is.na(cand_party)][1:10]
+
+#verify the number of NAs is the same as the numeber of O'Malleys
+#sum(cand_last_nm[is.na(cand_party)] == "O'Malley")
+cand_party = unname(cand_party)
+cand_party[is.na(cand_party)] <- 'Democrat'
+#levels(factor(cand_party))
+```
+
+
+```{r candidate gender, echo =FALSE}
+cand_gender = character(250411)
+cand_gender = rep('Male', 250411)
+cand_gender[cand_last_nm == 'Clinton'] <- 'Female'
+cand_gender[cand_last_nm == 'Fiorina'] <- 'Female'
+cand_gender[cand_last_nm == 'Stein'] <- 'Female'
+
+IL.presContr$cand_gender = cand_gender
+IL.presContr$cand_party = cand_party
+IL.presContr$cand_last_nm = cand_last_nm
+#IL.presContr$cand_nm_abv = cand_nm_abv 
+```
+
+I also cleaned the date format. For example  11-Jan-16  is turned into 11-01-2016.
+
+```{r receipt date cleaning, echo = FALSE}
+# fix year by adding 2000
+contb_dt = sub('-16','-2016',(as.character(IL.presContr$contb_receipt_dt)))
+contb_dt = sub('-15','-2015',contb_dt)
+contb_dt = sub('-14','-2014',contb_dt)
+contb_dt = sub('-13','-2013',contb_dt)
+
+#convet month abreviation into digits
+contb_dt = sub('Jan', '1',contb_dt)
+contb_dt = sub('Feb', '2',contb_dt)
+contb_dt = sub('Mar', '3',contb_dt)
+contb_dt = sub('Apr', '4',contb_dt)
+contb_dt = sub('May', '5',contb_dt)
+contb_dt = sub('Jun', '6',contb_dt)
+contb_dt = sub('Jul', '7',contb_dt)
+contb_dt = sub('Aug', '8',contb_dt)
+contb_dt = sub('Sep', '9',contb_dt)
+contb_dt = sub('Oct', '10',contb_dt)
+contb_dt = sub('Nov', '11',contb_dt)
+contb_dt = sub('Dec', '12',contb_dt)
+
+contb_date =as.Date(contb_dt, format = "%d-%m-%Y")
+contb_date_mY = format(contb_date, "%m-%Y")
+
+
+```
+
+
+
+```{r echo=FALSE}
+
+#I create a data frame that adds city, population, type and location coordinates
+cand_last_nm = factor(as.character(IL.presContr$cand_last_nm))
+contrib = data.frame(cand_name = IL.presContr$cand_nm, 
+                     cand_last_name = cand_last_nm,
+	                   contb_amt = IL.presContr$contb_receipt_amt,
+		                 contb_date = contb_date,	contb_date_mY,  
+		                cand_party, 
+		                cand_gender = IL.presContr$cand_gender, 
+		                city = contb_city$city,
+		                type = contb_city$type,
+		                population = contb_city$population,
+		                county = contb_city$county,
+		                lon = contb_city$lon,
+		                lat = contb_city$lat
+		                )
+#str(contrib)
+```
+
+
+```{r aggregate contributions by City, echo=FALSE}
+contb_by_city <- group_by(subset(contrib,contb_amt>0), city,type,population,lon,lat) %>%
+  summarise(amt_mean = mean(contb_amt),
+            amt_median = median(contb_amt),
+            total_amt = sum(contb_amt),
+            n=n()) %>%
+  arrange(type)
+#head(contb_by_city,10)
+
+#contb_by_city[which.max(contb_by_city$total_amt),]
+#head(contb_by_city[order(contb_by_city$total_amt,
+#                         decreasing = T),], 20)
+#head(contb_by_city[order(contb_by_city$amt_median, 
+#                         decreasing = T),], 20)
+```
+
+
+## Univariate Plots
+
+Here  we will explore the variable that I consider important in understanding 
+contributions to 2016 presidential candidates. 
+
+The first plot we look at is a bar plot of presidential candidates.
+
+```{r bar plot of count, echo = FALSE }
+ggplot(data=IL.presContr, aes(x=cand_last_nm)) +
+  geom_bar() + xlab('2016 Presidential Candidates') +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+
+  ggtitle("Frequency of contributions to 2016 presidential candidates ")
+
+```
+
+We see that the number of contribution in decreasing order went to :Clinton, Sanders, Trump, Cruz, Carson, and Robio. we see that the number of contributions to each of these candidates was a different order of magnitude. Clinton and Sanders seem to have most of the contributions around 80% of all contributions. 
+
+Next we look at the election type variable. It has four levels: P2016, G2016, O2016, P2020, and one with no title, either the contribution is unspecified, or there was an error. 
+
+```{r bar plot of election type, echo=FALSE}
+ggplot(data=IL.presContr, aes(x=election_tp)) +
+  geom_bar() + xlab('Election Type') + ylab('Count') +
+  ggtitle("Frequency of contributions according classified by election type")
+
+
+```
+
+We Observe as we expect that most contributions go either for the primary P2016, or the general elections G2016. 
+
+
+Next we look at frequency of contributions at the lace of origin. Places are classified as
+cities, towns and villages. Unclassified places are either unincorporated, that is populated places with no municipality or that is a place that lies outside the state.  
+
+```{r bar plot of place type, echo=FALSE}
+ggplot(data = contrib, aes(x=type)) +
+  geom_bar() + xlab('Type of place where contribtion originated') + ylab('Count') +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+
+  ggtitle("Frequencey of contributions by the type of the place of origin ")
+
+```
+
+We see that most of the contributions came from  cities , then villages. Much less from towns or places other than the above. 
+
+Here is the exact count in each type
+
+```{r counts of city_type in IL.predContrb, echo FALSE}
+summary(contrib$type)
+
+```
+
+Here is a summery of the number of cities , towns and villages in Illinois
+
+```{r counts of city_type in IL, echo FALSE}
+summary(IL_city_sl$type)
+
+```
+
+This explains why so many contributions came from cities and villages we need to look at the population in these places. Here is a summary of the population
+
+```{r }
+with(data = IL_city_sl, by(as.numeric(population), type, summary))
+```
+
+Here is the summary of the total population in Illinois. Notice that
+75% of the places in the state are populated by at most 6200. 
+
+```{r population in cities of IL stats, echo = FALSE }
+summary(as.numeric(IL_city_sl$population))
+
+```
+
+
+Now we switch to explore population of places where contributions originated. 
+
+
+
+```{r histogram contribution freq by population, echo=FALSE}
+ggplot(data= contrib, aes(x=population)) +
+  geom_histogram(binwidth=50000) + xlab('Population') + ylab('Count') +
+  scale_x_continuous(breaks = c(0, 50000, 100000, 200000,2700000))+
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+
+  ggtitle("Histogram of the population of cities where the contributions originated")
+
+```
+
+Chicago the most populous city in the state naturally stands alone among the most contributed place. Places with population less than 50,000 contributed slightly more, while places with population between 50,000 and 100,000 contributed slightly less than Chicago.
+
+To put things in perspective lets look at the histogram of the population of the cities in IL. Notice that the histogram below shows the frequency of locatios(cities, villages and towns) based on their population. 
+
+```{r freq plot population in IL, echo=FALSE}
+ggplot(data = subset(IL_city_sl,as.numeric(population)>1), 
+       aes(x=as.numeric(population))) +
+  geom_histogram(binwidth=50000) + xlab('Population') + ylab('Count') +
+  scale_x_continuous(breaks = c(0, 50000, 100000, 200000,2700000))+
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+
+  ggtitle("Histogram of the population of cities in IL 
+          (independent  of contributions)")
+
+```
+
+As the summary of populations showed, places in the state are mainly populated by less than 50000.
+
+Below is a zoomed-in view of population histogram excluding Chicago, and with smaller binwidth of only 5000. The binwidth in the above histogram is 50000. 
+
+```{r population IL restricted 2, echo=FALSE}
+ggplot(data= subset(IL_city_sl,(as.numeric(population)<2000000) & 
+                      (as.numeric(population)>0)),
+       aes(x=as.numeric(population))) +
+  geom_histogram(binwidth=5000) + xlab('Population') + ylab('Count') +
+  scale_x_continuous(breaks = c(0, 5000, 10000,25000, 50000, 100000,
+                                200000))+
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+
+  ggtitle("Histogram of the population of cities in IL",
+          " zoomed-in excluding Chicgo")
+
+```
+
+
+The histogram above show that most places have low population, less than 5000.
+
+
+Lets look at the population histogram on a logarithmic scale so that we appreciate the number of places with very low population sizes. 
+
+```{r bar plot log population in IL, echo=FALSE}
+ggplot(data = subset(IL_city_sl,as.numeric(population)>0), 
+       aes(x=as.numeric(population))) +
+  geom_histogram(binwidth=0.1) + xlab('Population (log scale)') + ylab('Count') +
+  scale_x_log10(breaks = c(0,50,100,300,1000,3000, 5000, 10000,
+                           25000, 50000, 100000,200000,2700000))+
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+
+  ggtitle("Histogram of the population of cities in IL on Logarithmic scale
+          (independent  of contributions)")
+
+```
+
+The plot above show the density of places with population less than 3000. Recall the median of the population distribution among cities is 1185 and the third quartile is 6200.
+
+
+```{r histogram of number of contributions , echo=FALSE}
+
+ggplot(data= subset(contb_by_city,n>0), aes(x=(as.numeric(n)))) +
+  geom_histogram(binwidth=0.2) +
+  scale_x_log10(breaks=c(1, 3, 5, 10,30, 50, 100,300, 500, 1000, 3000, 
+                         5000, 10000, 70000))+
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+
+  xlab('Number of contribution per place on log scale')+
+  ggtitle('Histogram of the number of contributions per place on logarithmic scale ')
+
+
+```
+
+We observe from the plot above that most places made less than 50 contributions. However
+this not surprising since half of the places have population less than 1185. 
+
+Below we look at the ratio of the number of contributions to the population of the place where the contributions originated. 
+
+```{r histogram of number of contributions per population , echo=FALSE}
+
+ggplot(data= subset(contb_by_city,population  >0), 
+       aes(x=(as.numeric(n)/population ))) +
+  geom_histogram(binwidth=0.1) +
+  scale_x_log10(breaks=c(0.0001, 0.0005, 0.001, 0.003, 0.005, 0.01,
+                         0.02, 0.03, 0.05, 0.1, 0.3, 1,1.5)) +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+
+  xlab('Number of contribution per population')+
+  ggtitle('Histogram of the number of contributions per  population size on logarithmic scale')
+
+
+```
+
+The plot of the number of contribution to population ratio shows that for  most places
+less than 2% of its population made a contribution. However, there are places where the ratio is 1.5; which implies that some groups have contributed more than once where the population size is small. 
+
+
+Now we look at frequency of dates when contributions where made.
+
+```{r histogram of dates, echo=FALSE}
+ggplot(data= subset(contrib, as.numeric(contb_date)>16500),
+       aes(x=as.Date(contb_date))) +
+  geom_histogram(binwidth=30) + xlab('Time(days)') + ylab('Count') +
+  scale_x_date(breaks=as.Date(c("2015-05-01", "2015-07-01", "2015-10-1", "2016-01-01", 
+                        "2016-03-01","2016-05-01", "2016-08-01", "2016-11-01"))) +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+
+  ggtitle("Histogram of the dates when contributions where made")
+
+```
+
+
+Notice that at the beginning, contributions where minimal and then gradually increased
+as time progressed. We observe some peak in March 2016, July 2016 and October 2016. These are could be in response to campaign drives asking for donations/contributions. 
+
+Next, we plot a histogram of contributed amounts. 
+
+```{r histogram of contributed amount, warning=FALSE, echo=FALSE}
+ggplot(data=IL.presContr, aes(x=IL.presContr$contb_receipt_amt))+
+  geom_histogram(binwidth = 200)+ 
+  scale_y_continuous()+xlab("Contributions") +
+  ggtitle("Histogram of contributed amount duing the 2016 presidential elections")
+
+```
+
+
+We notice first that most contributions are less than 200, the binwidth of this histogram.
+
+We observe from the histogram that there are negative values, which are refunds. 
+I did not know that people ask for a refund after their donation. This was a surprise.
+we make a plot of each separately. I use the log scale for the counts since small contributions are plenty compared to much fewer much larger contributions.  
+
+```{r histogrm ofcontributions no refunds, warning=FALSE, echo = FALSE}
+ggplot(data=subset(IL.presContr,IL.presContr$contb_receipt_amt > 0.05),
+                   aes(x=contb_receipt_amt))+
+  geom_histogram(binwidth=0.3)+
+  scale_x_log10(breaks =c(1,5,10,30,50,70,100,300,500,1000,3000,5000)) +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+
+  xlab(" Contributions (log scale)") + ylab('count') +
+  ggtitle('Histogram of contrbutions during 2015-2016 election season',
+          'on logarithmic scale ')
+```
+
+We observe from the above that most contributions are less than \$70. I estimate the first quartile to be \$15.  While contributions of \$3000 or more are rare.  
+
+```{r histogrm ofcontributions with refunds, warning=FALSE, echo= FALSE}
+ggplot(data=subset(IL.presContr,IL.presContr$contb_receipt_amt < 0),
+                   aes(x= -contb_receipt_amt))+
+  geom_histogram(binwidth=0.3)+
+  scale_x_log10(breaks=c(1, 3, 5, 10, 30, 50 , 100, 300, 
+                         500, 1000,2000, 3000, 5000, 10000))+
+  theme(axis.text.x=element_text(angle=90, hjust=1, vjust=0.5))+
+  xlab("Refunds (log scale)") + ylab("count") +
+  ggtitle('Histogram of refunds during 2015-2016 election season ')
+
+```
+
+We see from the above graph that the refunded amounts had a wide range, mostly small refunds less than \$100  and the largest refund is \$10000. We also observe a second peak of more than 400 refunds of size \$2000. 
+
+
+## Bivariate plots  
+
+Below is a table that gives the number of contributions classified by purpose
+as for primary elections,or general elections. Not quite sure what O2016 refers to. The only candidate with counts in this column is Jill Stein. The dates of these donation are from 23-Nov-2016 to 28-Nov-2016. Stein has counts for primary and general elections as well. There is also a column for 2020 presidential election contributions which has one contribution to Lindsay Graham
+
+Moreover, some candidates who had pulled out of the race, show counts under G2016. 
+Its very likely, that these refer to refunds. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+# candidates and number of contributions
+
+#count(IL.presContr, as.character(cand_nm))
+#table(IL.presContr$cand_nm)
+
+# number ofcontribution clasffied by purpose
+table(IL.presContr$cand_nm,IL.presContr$election_tp)
+```
+
+
+I am curious about the O2016 category that only Stein falls into. 
+Here is a summary of the 70 contributions to Jill Stein in O2016 category 
+
+```{r Jill Stein O2016 contributions, echo = FALSE}
+#IL.presContr$contb_receipt_dt[IL.presContr$cand_last_nm == 'Stein' & IL.presContr$election_tp == 'O2016']
+
+summary(IL.presContr$contb_receipt_amt[IL.presContr$cand_last_nm == 'Stein' & IL.presContr$election_tp == 'O2016'])
+
+#contrib$contb_date[cand_last_nm == 'Stein']
+```
+ From the above we conclude that "O" in O2016 is most likely to be "other", and referring to 
+ contributions following the elections. 
+ 
+ 
+```{r bar chart of contribution type, echo= FALSE}
+ggplot(data=IL.presContr, aes(cand_last_nm))+ 
+  geom_bar(aes(fill=election_tp), position = position_stack(reverse = TRUE))+
+  coord_flip() +
+  ylab('count') +  xlab('Candidate')+
+  ggtitle('Frequency of election type for each candidate ')
+
+```
+
+We repeat the same bar plot but with election type bars next to each other.
+
+```{r bar chart of contribution type 2, echo=FALSE}
+ggplot(data=IL.presContr, aes(cand_last_nm))+ 
+  geom_bar(aes(fill=election_tp), position = "dodge") +
+  coord_flip() +
+  ylab('count') +  xlab('Candidate')+
+  ggtitle('Frequency of election type for each candidate ')
+
+
+```
+
+
+We observe that the front runners among the democrats are Clinton and Sanders, with Sanders
+receiving more contributions before the primaries. While among the republicans, 
+the front runners are Trump and Cruz with almost equal number of supporters. 
+
+Below is the same plot but restricted to include no refunds. The noticeable change is with
+Trumps G2016 contributions go down slightly. 
+
+```{r bar chart of contribution type 3 no refund , echo=FALSE}
+ggplot(data=subset(IL.presContr,contb_receipt_amt>0), aes(cand_last_nm))+ 
+  geom_bar(aes(fill=election_tp), position = "dodge") +
+  coord_flip() +
+  ylab('count') +  xlab('Candidate')+
+  ggtitle('Frequency of election type for each candidate ')
+
+
+```
+
+
+
+ 
+
+```{r contribtion R count by type P2016, G2016, O2016 and unspesified, echo =FALSE}
+#ggplot(data=subset(IL.presContr, cand_party =='Republican'), aes(election_tp)) +
+#  geom_bar() + theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+
+#  facet_wrap(~cand_last_nm )
+
+```
+
+Below is a summary of sum, mean, median, 25th percentile, 75th percentile, 90th percentile and max contributions for each party. Notice the gap between the 90th percentile and the maximum contributed amount.
+
+```{r net amount contributed per party, echo=FALSE}
+contbr_amt_by_party <-group_by(IL.presContr, cand_party) %>%
+  summarise(Total = sum(contb_receipt_amt),
+            Mean = mean(contb_receipt_amt),
+            Quart_1 = quantile(contb_receipt_amt, .25),
+            Median = median(contb_receipt_amt),
+            Quart_3 =quantile(contb_receipt_amt, .75),
+            Perct_90 =quantile(contb_receipt_amt, .90),
+            Max = max(contb_receipt_amt), 
+            var = var(contb_receipt_amt),
+            std = sqrt(var(contb_receipt_amt)),
+            n=n()) %>%
+  arrange(cand_party)
+
+print(contbr_amt_by_party)
+
+```
+
+A summary of mean, median and sum and number of contributions for each candidate towards any category, primaries p2016, general election G2016, P2020, O2016, or anything else.   
+
+```{r contributions by candidate, echo=FALSE}
+contbr_amt_by_cand <- group_by(IL.presContr, cand_nm) %>%
+  summarise(total = sum(contb_receipt_amt),
+            amt_mean = mean(contb_receipt_amt),
+            amt_median = median(contb_receipt_amt),
+            n=n()) %>%
+  arrange(cand_nm)
+
+print(contbr_amt_by_cand, n=24)
+
+```
+
+Lets now have a look at a summary of contributions that candidates got towards the primary election 2016  only. 
+
+```{r summary of contributions by candidate, echo=FALSE}
+contb_amt_primary_2 <-subset(IL.presContr, (election_tp == 'P2016' )) %>%
+  group_by(cand_last_nm) %>%
+  summarise(total = sum(contb_receipt_amt),
+            mean = mean(contb_receipt_amt),
+            median = median(contb_receipt_amt),
+            n=n()) %>%
+  arrange(cand_last_nm)
+print(contb_amt_primary_2, n=24)
+```
+
+Comparing the above two tables in terms of the amount they received over the full election season and the amount they got towards the primaries, we see for those candidates who continued to the general elections had their amount at least double. 
+
+
+Lets look at a distribution of the contributed amount for each party.
+
+
+```{r histogram of contributions by party, warning =FALSE, echo = FALSE}
+ggplot(data = subset(IL.presContr, contb_receipt_amt>0.05), 
+       aes( x= contb_receipt_amt))+ labs(y="log count")+
+  geom_histogram(binwidth=100)+
+  scale_y_log10(limits=c(1,50000), breaks = c(1,10, 50, 200, 500, 2000,10000,50000))+ 
+  facet_wrap(~cand_party)+
+  ggtitle("log count histogram of contributions by party")
+```
+
+
+We observe from this histogram that Democrats and Republicans are comparable with the 
+Democrats receiving  smaller amounts while Republicans getting more large amounts. 
+
+We also see that the Green and Libertarian parties are comparable. 
+
+Now we look at visual summaries of contribution for each candidate using box-plots. We look at Democratic candidates and Republican candidates separately. 
+
+```{r box-plot for Democrats, echo=FALSE}
+ggplot(aes(x = cand_last_nm, y = contb_receipt_amt),
+       data = subset(IL.presContr, cand_party == 'Democrat')) +
+  geom_boxplot() +
+  stat_summary(fun.y = "mean", geom = "point", shape = 4) +
+  xlab('Candidate') + ylab("contributed amount") + 
+  ggtitle('Box-plots of contrbutions to Democratic candidates')
+  
+```
+
+
+The box plot shows that enthusiasm towards Sanders is as strong as that for Clinton. Mostly 
+they received small contributions. 
+
+
+```{r box-plot for Republicans, echo=FALSE}
+ggplot(aes(x = cand_last_nm, y = contb_receipt_amt),
+       data = subset(IL.presContr, cand_party == 'Republican')) +
+  geom_boxplot()+
+  stat_summary(fun.y = "mean", geom = "point", shape = 4)+
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5)) +
+  xlab('Candidate') + ylab("contributed amount") + 
+  ggtitle('Box-plots of contrbutions to Republican candidates')
+```
+
+Among republicans, we see that Carson, Cruz, Rubio and Trump receiving mainly small
+contributions in addition with the upper 25% of contributions was very spread out reaching as high as 10000 dollars.
+
+```{r box-plot for none major parties, echo=FALSE}
+ggplot(aes(x = cand_last_nm, y = contb_receipt_amt),
+       data = subset(IL.presContr, (cand_party == 'Green' |cand_party == 'Liberterian'|
+                                      cand_party == 'Independent'))) +
+  geom_boxplot()+
+  stat_summary(fun.y = "mean", geom = "point", shape = 4)+
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5)) +
+  xlab('Candidate') + ylab("contributed amount") + 
+  ggtitle('Box-plots of contrbutions to none-major party candidates')
+```
+
+We see that the Green party and Libertarian party have comparable contributions
+
+A summary  of contributions for each candidate
+
+```{r summary, echo=FALSE}
+with(IL.presContr,  by(contb_receipt_amt, cand_nm, summary))
+
+```
+
+
+Next I would like to see how many contributed in different contribution amounts for the front
+runners in the major parties.
+
+```{r amount brackets, echo=FALSE}
+IL.presContr$amt.bucket <- cut(IL.presContr$contb_receipt_amt, c(-10000, -5000, -1000, -500, -100, -50, 0, 50, 100, 200, 500, 2000, 5000, 11000))
+#table(IL.presContr$amt.bucket, IL.presContr$cand_last_nm)
+
+
+contb_amt_cand.bucket <- group_by(IL.presContr, cand_last_nm, amt.bucket) %>%
+  summarise(amt_mean = mean(contb_receipt_amt), 
+            amt_median = median(contb_receipt_amt),
+            n=n()) %>%
+  arrange(cand_last_nm)
+
+contb_amt_cand.bucket$percent=rep(99999, dim(contb_amt_cand.bucket)[1])
+for(cand in levels(as.factor(IL.presContr$cand_last_nm))){
+  contb_amt_cand.bucket[contb_amt_cand.bucket$cand_last_nm == cand,]$percent <- 
+    with(subset(contb_amt_cand.bucket,cand_last_nm == cand), 100*n/sum(n))
+}
+
+print(subset(contb_amt_cand.bucket, cand_last_nm == 'Clinton'))
+
+print(subset(contb_amt_cand.bucket, cand_last_nm == 'Sanders'))
+
+print(subset(contb_amt_cand.bucket, cand_last_nm == 'Cruz'))
+
+print(subset(contb_amt_cand.bucket, cand_last_nm == 'Trump'))
+    
+#table(contb_amt_cand.bucket.bucket, useNA = 'ifany')
+```
+
+
+
+I am interested in the (0,50]  and (50,100] buckets. In these we find that percent contribution to Clinton among her total contributions are 69% and 15.5% respectively; Sanders: 84.4% and 10.7% respectively; Cruz: 66.6% and 19% respectively; Trump: 46.6% and 22.7% respectively.
+
+
+Now lets look at the box plots in these two buckets.
+
+
+
+
+```{r box plot median brackets four candidates, echo=FALSE}
+ggplot(data=subset(IL.presContr, (cand_last_nm == 'Clinton' |
+                     cand_last_nm == 'Cruz' | cand_last_nm == 'Sanders' |
+                     cand_last_nm == 'Trump')&(amt.bucket == "(0,50]" |
+                                                 amt.bucket == "(50,100]")),
+       aes(x= cand_last_nm, y=contb_receipt_amt)) +
+  geom_boxplot() +
+  stat_summary(fun.y = "mean", geom = "point", shape = 4)+
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5)) +
+  facet_wrap(~ amt.bucket) +
+  xlab('Candidate') + ylab("contributed amount") + 
+  ggtitle('Box-plots of contrbutions in two brakets
+            between 0 and $50            and            between $50 and $100')
+
+```
+
+We see here that in the (0,50] bracket the medians are the same around \$25. The distribution 
+for  Clinton and Sanders are almost the same. Cruz's  distribution is left skewed with more than 25% contribute \$50. Trump's distribution seems symmetric.
+
+However, the (50,100] bracket is a very different story, all distributions are skewed to different degrees. Except for Trump, all candidate's median is very close to \$100. Trump's is the least skewed, while the others are heavily skewed to the left. 
+
+
+In either brackets the distributions of all contributions is far from the normal distribution. I do not pursue statistical analysis of means within these brackets. 
+
+
+
+Lets look at contributions using  box-plot for each party:
+
+```{r box-plot by party, echo=FALSE}
+ggplot(data = contrib, aes(cand_party, contb_amt)) + 
+  geom_boxplot() + xlab('Party') + ylab('contrbutions')+
+  ggtitle('Box-plots summerizing contributions towards each party')
+
+```
+
+Most contributions are small across parties. Contributions to republican candidates are far wide spread. Parties other than Republicans and Democrats are have much less refund if any and the largest contributions are much smaller. 
+
+```{r box-plot by party log scale, echo=FALSE}
+ggplot(data = subset(contrib,contb_amt>0.01), aes(cand_party, contb_amt)) + 
+  geom_boxplot() + xlab('Party') + ylab('Contrbutions(log scale)')+
+  scale_y_log10(breaks=c(0,0.5, 1,3,5, 10,25,50,75,100,200,500,1000,2000,
+                         5000,10000)) +
+  ggtitle('Box-plots summerizing contributions towards each party on logarithmic scale')
+
+```
+
+There is not clear whether there is  much difference in mean between the parties.
+
+Lets zoom in towards contributed amounts less than 1000 and 100 respectively:
+
+```{r box zoom in, echo=FALSE}
+
+p1 <- ggplot(data = subset(contrib, abs(contb_amt) < 1000), 
+             aes(cand_party, contb_amt)) + geom_boxplot() + 
+        xlab('Party') +ylab('contrbutions') +
+       ggtitle('Box-plots summerizing contributions towards each party')
+  
+ 
+p2 <- ggplot(data = subset(contrib, abs(contb_amt) < 100),
+             aes(cand_party, contb_amt)) +
+        geom_boxplot() + xlab('Party') + ylab('contrbutions') +
+        ggtitle('Box-plots summerizing contributions towards each party')
+
+grid.arrange(p1,p2, ncol=1)
+
+```
+
+
+We test statistically for the difference in means of contributed amounts  towards the  parties using analysis of variance applied on logarithm transform of the contributions, since the transformed values are normally distributed. 
+
+```{r statistical test contribution, party, echo = FALSE}
+
+fit_party <-  aov(log10(contb_amt) ~cand_party , 
+                  data=subset(contrib, contb_amt>0 ))
+
+summary(fit_party)
+
+#plot(fit_party)
+
+```
+
+The results here show that means of the parties are statistically different. So now we apply Tukey's procedure to determine which parties are statistically different on the mean.
+
+
+
+```{r Tukey test multiple comparisones on means- parties, echo=FALSE}
+
+TukeyHSD(fit_party, ordered=TRUE)                                                
+
+
+```
+
+
+Tukey's procedure comparing the parties on mean of log transformed contributions shows that  the Democratic party is statistically lower  than the mean of any other party. The Libertarian and the green parties means are not significantly different. The Republican party  is different from other parties except the Independent candidate. 
+
+
+Lets examine if there is any difference in contributions between people in cities, villages, town or other unrecognized  places. First we look at a box plot with amount on logarithmic scale
+
+
+```{r boxplot contrib by place type, echo =FALSE}
+ggplot(data=subset(contrib, contb_amt > 0),
+       aes(x=type, y=contb_amt)) +
+  geom_boxplot() + 
+  scale_y_log10(breaks = 
+                  c(0.5,1,2,3,5,10,25,50,100,200,500,1000,2000,5000)) +
+  xlab('Place of contribution origin type' ) + ylab('Contributions (log scale)') +
+  ggtitle('Amounts contributed by place of origin by type on Logarithmic scale')
+
+```
+
+We see from the box plot above, that contributions from cities or villages are very similar in spread and median. Keep in mind the frequency plots above, that there are more contributions from city dwellers than from village dwellers. 
+
+Lets test for the difference of amounts contributed excluding refunds between the different places. Again I take logarithmic transform of the contributions since it satisfies the normality assumption. 
+
+```{r stat test amount, type, echo=FALSE}
+
+
+fit_type <-  aov(log10(contb_amt) ~ type , 
+                  data=subset(contrib, contb_amt>0 ))
+
+summary(fit_type)
+
+#plot(fit_type)
+
+
+```
+
+The analysis of variance show that there is difference between place types. Now we apply Tukey's' procedue to find out which are the different ones. 
+
+```{r Tukey test multiple comparisones on means- place type, echo=FALSE}
+
+TukeyHSD(fit_type, ordered=TRUE)                                                
+
+
+```
+
+Tukey's procedure on log transformed contributions shows that the means between villages and cities are not statistically different, between towns and those collection of places outside the state and unincorporated places are also not different statistically. However, cities and villages means are different from towns as well are from the unincorporated places and other places outside the state. 
+
+#### Population versus contributions
+
+
+
+
+To what degree does the population of the place  had an effect  on contributions from a given location ? we try to answer this question partially here. To do this we lump all contributions from each place. Lets look at a plot of total contributions per place versus the population of that place. 
+
+
+```{r plotting 1, echo=FALSE}
+ggplot(data=subset(contb_by_city, population<3000000), aes(x=population,y=total_amt))+
+  geom_point() + 
+  scale_size_identity() +
+  ylab(" Total contributed amount")+
+  xlab("population")+
+  ggtitle("Total contributed amount versus population including Chicago")
+```
+
+
+Chicago a city with population close to 2.7 million stand by it self. We need a plot for cities less than half a million or 200 thousand. 
+
+```{r plotting 2, echo=FALSE}
+ggplot(data=subset(contb_by_city, population<200000), aes(x=population,y=total_amt))+
+  geom_point() + 
+  scale_size_identity() +
+  ylab(" Total contributed amount")+
+  ggtitle("Total contributed amount versus population excluding Chicago")
+```
+
+Some small population cities have much larger contributions compared to cities 
+with comparable or higher population. 
+
+The size of the population and contributions suggest to consider transforming the data 
+to log scale, and then try a linear fit. 
+
+```{r plotting  3, echo=FALSE}
+ggplot(data=subset(contb_by_city, (population<5000000)&(population>0)),
+       aes(x=population,y=total_amt))+
+  geom_point() + scale_x_log10()+scale_y_log10()+
+  geom_smooth(method='lm') +
+  ylab(" Total contributed amount (log scale) ")+
+  xlab("Population (log scale) ")+
+  ggtitle("Total contribuions versus population on log-log scale")
+```
+
+The scatter plot shows good correlation between population size and total contributed amount
+We also observe there is higher variability about the linear fit, for populations around 1000.
+
+We attempt a least square linear fit to see any relation between total contribution and population. We expect the size of Chicago to be an influence point. We can reduce the influence by using logarithmic transformation on both variables. 
+
+```{r stat test amount, population, echo=FALSE}
+
+# including Chicago
+#summary(lm(total_amt ~ population, data=subset(contb_by_city, (population<5000000)&(population>0))))
+
+
+## including Chicago wiht log transform both variables
+summary(lm(log10(total_amt) ~ log10(population) ,
+           data=subset(contb_by_city, (population<5000000)&(population>0))))
+
+
+# excluding Chicago
+#summary(lm(total_amt ~ population, data=subset(contb_by_city, (population<500000)&(population>0))))
+
+
+## excluding Chicago with log transform both variables
+#summary(lm(log10(total_amt) ~ log10(population), data=subset(contb_by_city, (population<500000)&(population>0))))
+
+
+   
+```
+
+we see that there is a moderate associate between log base 10 of the total contributions per place and log base 10 of population. 
+
+Now we plot the mean amount against the population of a place.  
+
+
+```{r plotting 4, echo=FALSE}
+ggplot(data=subset(contb_by_city, (population<500000)), 
+       aes(x=as.numeric(population),y=amt_mean))+
+  geom_point() + 
+  ylab("mean of contributed amount")+
+  xlab("population")+
+  ggtitle("Contribuions mean versus population")
+
+```
+
+We observe that most contributions are small especially for populations over 50000.
+However, beware that, contributions that came from outside the state or unincorporated places show up here
+at population 0 or places that lie outside of the state. The mean amount is rather a total amount from these particular locations. That is there is only one person who made a large contribution from these locations.
+
+
+
+
+```{r plotting 5, echo=FALSE}
+ggplot(data=subset(contb_by_city, (population>0) &(population<5000000)), 
+       aes(x=as.numeric(population),y=amt_mean))+
+  geom_point() + scale_x_log10() + scale_y_log10()+
+  geom_smooth(method='lm')+
+  ylab("mean of contributed amount (log scale) ")+
+  xlab("Population (log scale) ")+
+  ggtitle("Mean contribuions versus population on log-log scale")
+
+```
+
+A scatter plot and a linear fit with a slope that is almost zero show low correlation between population and mean amount.
+
+```{r plotting 6, echo=FALSE}
+ggplot(data=subset(contb_by_city, population<10000), aes(x=population,y=amt_mean))+
+  geom_point() + 
+  ylab("average contributed amount") +
+  xlab("population")+
+  ggtitle("Mean contribuions versus population ", 
+          "For places with les than 10000 inhabitants")
+
+```
+
+We see here the variability in mean amount of contributions among populations less than 5000. 
+
+Now we plot contributed amounts per capita.
+
+```{r plotting 7, echo=FALSE}
+ggplot(data=subset(contb_by_city, population>0),
+       aes(x=population,y=total_amt/population))+
+  geom_point() + 
+  scale_x_log10() + scale_y_log10()+ 
+  geom_smooth(method='lm')+
+  ylab("Contributed amount per capita (log scale)") +
+  xlab("Population (log scale) ") +
+  ggtitle("Contributed amount per capita versus population on log-log scale ")
+```
+
+The scatter plot here is a cloud that shows no correlation between population and the 
+amount per capita. 
+
+
+
+```{r correlation, echo=FALSE }
+print('correlation between population and mean of contribtions')
+print(with(subset(contb_by_city,population >0) ,
+           cor(population,amt_mean)))
+
+cat('correlation between log transformed of both population', 
+      'and mean of contribtions \n')
+print(with(subset(contb_by_city,population >0) ,
+           cor(log10(population),log10(amt_mean))))
+```
+
+As we see that correlation are extremely week or nonexistent. 
+
+
+Lets look at relation between total contributed amounts and the number of contributions per place. 
+
+```{r number of contrbution , total amt, echo=FALSE}
+ggplot(data = subset(contb_by_city, 
+                     (population<5000000)&(population>0)&log10(n)>0),
+       aes(x=((n)), y=(total_amt)))+
+  geom_point() +
+  scale_x_log10(breaks= c(1,  2,  3, 5, 10, 30, 50, 100, 300, 500, 
+                          1000, 3000, 5000, 70000)) + 
+  scale_y_log10()+
+  geom_smooth(method = 'lm')+
+  xlab('Number of contributed amounts (log scale)') +
+  ylab('Total contributed amount (log scale)') +
+  ggtitle('Number of contributions per place against total contributed amounts 
+          on log-log scale')
+  
+
+```
+
+We observe that places that contributed few times, had a great deal of variability in the total amount it contributed. As the number of contributions increased the variability seams to be less. A linear fit seam to be reasonable here. 
+
+```{r linear fit, number of contrbution and total amount, echo=FALSE}
+cat('Correlation between the log of number of contributions', 
+    'and log total amount is', with(data = subset(contb_by_city,
+                   (population<5000000)&(population>0)&log10(n)>0), 
+     cor(log10(n), log10(total_amt))))
+
+cat('\n \n Linear least squares regression model')
+summary(lm(log10(total_amt)~log10(n), 
+           data = subset(contb_by_city,(population<5000000)&
+                           (population>0)&log10(n)>0)))
+
+
+```
+
+The least square fit here shows a strong association and explains 86% of the variation in the total contributed amount.  
+
+#### location versus contribution
+
+
+Here is a plot of all places(cities, villages and towns) that made a contribution.
+
+```{r plotting city sized by contributed amounts, echo=FALSE}
+# plotting a map showing all cities in Illinois.
+
+ggplot(data=subset(contb_by_city,(lon != 0)), aes(x=lon, y=lat))+  
+  geom_point(data=subset(contb_by_city,lon != 0), alpha=0.1) + 
+  coord_map() + geom_path( data=map_IL, aes(x=long, y=lat))+
+  scale_size_identity()+
+  ggtitle('Distribution  of places that offered contributions')
+```
+
+So it appears that the distribution is uniform.
+
+we know that most contributions are small. The question now is where did large contributions  come from .  The following map show the location of places that made contributions over \$200. As you see the map is less dense but yet they are scattered every where.In particular, not any seem close to main cities in the state, we may conclude most these came from rural areas. 
+
+
+```{r cities where median contribution exceeds 200 dollars, echo=FALSE}
+# plotting a map showing all cities in Illinois.
+
+ggplot(data=subset(contb_by_city,(lon != 0)& (amt_median > 200)), 
+       aes(x=lon, y=lat))+  
+  geom_point(data=subset(contb_by_city,(lon != 0)&(amt_median > 200)), 
+             alpha=0.5) + 
+  coord_map() + geom_path( data=map_IL, aes(x=long, y=lat))+
+  scale_size_identity()+
+  ggtitle('Distribution of places that offered at more than $200')
+```
+
+As you see the map is less dense but yet they are scattered every where.In particular, not any seem close to main cities in the state, we may conclude most these came from rural areas. Lets verify this by looking at a summary of populations of these places.
+
+```{r median amt less than 200,echo=FALSE}
+cat('Summary of population of places that offered more than $200 \n')
+with(data=subset(contb_by_city, amt_median > 200), 
+     summary(population))
+
+cat('\nPercentiles of the population of places that offered more than $200 \n')
+with(data=subset(contb_by_city, amt_median > 200), 
+     quantile(population,c(.85,.9,.95,.97,.99)))
+```
+
+The summary shows that 75% of these places have a population less than 503. Even 95% of these places have a population less that 2700. So they are mostly rural. 
+
+
+## Multivariate plots
+
+In this section I intend to look at contributions over time, as well as interaction between several of the variables I explored above. 
+
+First, I explore the amount contributed over time for the main parties. 
+
+
+```{r  data frames for time series plots, warning=FALSE, echo=FALSE}
+
+##I first learned how to plot time serie from the website
+##<http://www.wekaleamstudios.co.uk/posts/plotting-time-series-
+##data-using-ggplot2/#irtSRkhGbXg>. Then I used the pipes as it 
+##was introduced in the EDA lessons, and was to get the same result
+##in terms of aggregating data by date to be ready for plotting it. 
+
+
+
+contrib_Repub = subset(contrib, cand_party=='Republican')
+contrib_Dem = subset(contrib, cand_party == 'Democrat')
+contrib_Libr = subset(contrib, cand_party == 'Libertarian')
+contrib_Grn = subset(contrib, cand_party == 'Green')
+contrib_Indp = subset(contrib, cand_party == 'Independent')
+contrib_nonRepDem = subset(contrib, (cand_party != 'Republican') &
+                             (cand_party != 'Democrate'))
+
+
+contrib_Repub.df = data.frame(
+			date =names(tapply(contrib_Repub$contb_amt,
+			                   contrib_Repub$contb_date,sum)),
+			amount = as.numeric(tapply(contrib_Repub$contb_amt,
+			                           contrib_Repub$contb_date,sum))
+			)
+contrib_Repub.df$cand_party = rep('Republican',
+                                  dim(contrib_Repub.df)[1])
+contrib_Dem.df = data.frame(
+			date =names(tapply(contrib_Dem$contb_amt,
+			                   contrib_Dem$contb_date,sum)),
+			amount = as.numeric(tapply(contrib_Dem$contb_amt,
+			                           contrib_Dem$contb_date,sum))
+			)
+contrib_Dem.df$cand_party = rep('Democrat',dim(contrib_Dem.df)[1])
+
+
+
+#ggplot(data = contrib_Repub.df, aes(as.Date(date),amount)) + 
+#  geom_line() + geom_smooth()+
+#  scale_x_date(date_labels= "%b %Y", 
+#             limits = as.Date(c("2015-06-01","2016-11-7"))) +
+#  xlab("") + ylab("daily contribution") + scale_y_log10()
+```
+
+
+
+
+```{r TS, echo=FALSE, warning=FALSE, message=FALSE}
+contrib_ts =join(contrib_Dem.df,contrib_Repub.df, type='full')
+
+contrib_ts2 = subset(contrib_ts, as.Date(date)>"2015-06-01")
+ggplot(data = contrib_ts2, aes(as.Date(date),amount)) + 
+  geom_line(aes(color = cand_party),data=contrib_ts2) + 
+  geom_smooth(aes(color = cand_party),data=contrib_ts2)+
+  scale_x_date(date_labels= "%b %Y", 
+               limits =   as.Date(c("2015-06-01","2016-11-7"))) +
+  xlab("Time (days by date)") + ylab("log daily contribution") + scale_y_log10()+
+  ggtitle('logarithm of daily contribtuions to Democrats and Repulicans')
+
+
+```
+
+
+We observe considerable fluctuations over time in daily contribution for both parties. The Democrats received more contribution on a daily basis except around October of 2015.
+
+
+Lets look at the mean amount received each day.
+
+
+
+```{r  mean contrbution over time, echo=FALSE, warning=FALSE}
+ 
+# Here I prepare data frames for mean contrbuted over time
+contrib_Repub_mn.df = data.frame(
+			date =names(tapply(contrib_Repub$contb_amt,
+			                   contrib_Repub$contb_date,mean)),
+			amount = as.numeric(tapply(contrib_Repub$contb_amt,
+			                           contrib_Repub$contb_date,mean))
+			)
+contrib_Repub_mn.df$cand_party = rep('Republican',
+                                     dim(contrib_Repub_mn.df)[1])
+contrib_Dem_mn.df = data.frame(
+			date =names(tapply(contrib_Dem$contb_amt,
+			                   contrib_Dem$contb_date,mean)),
+			amount = as.numeric(tapply(contrib_Dem$contb_amt,
+			                           contrib_Dem$contb_date,mean))
+			)
+contrib_Dem_mn.df$cand_party = rep('Democrat',
+                                   dim(contrib_Dem_mn.df)[1])
+
+```
+
+
+
+```{r  echo=FALSE, warning = FALSE, message=FALSE}
+contrib_ts3 =join(contrib_Dem_mn.df,contrib_Repub_mn.df, type='full')
+
+contrib_ts4 = subset(contrib_ts3, as.Date(date)>"2015-04-16")
+ggplot(data = contrib_ts4, aes(as.Date(date),amount)) + 
+  geom_line(aes(color = cand_party), data=contrib_ts4) + 
+  geom_smooth(aes(color = cand_party), data=contrib_ts4)+
+  scale_x_date(date_labels= "%b %Y", 
+               limits =   as.Date(c("2015-06-01","2016-12-7"))) +
+  xlab("Time ( days by date)") + ylab("log daily contribution") + scale_y_log10() +
+  ggtitle('Logarithm of mean daily contributions')
+```
+
+We observe from the above plots that Democrats had higher daily contributions. But the average daily contribution of the Republicans was higher on the other hand. 
+
+We wish to smooth the fluctuations in the graph. Therefore, we consider a moving average over 7 days. 
+
+
+```{r smoothing by averaging overs a number of days, echo=FALSE}
+# I want to  average over few days or a whole motnth
+# I start with republicans
+
+# Republican daily aggregate of contributed amounts
+contrib_Repub_dag <- group_by(contrib_Repub, as.Date(contb_date)) %>%
+  summarise(daily_sum = sum(contb_amt),
+            date=mean(contb_date),
+            n=n())%>%
+  arrange(date)
+head(contrib_Repub_dag)
+# consider contriutions only after May 1st 2015
+contrib_Repub_dag_515 = subset(contrib_Repub_dag, date > as.Date("2015-04-30") )
+
+# computing 7-day moving average
+L=dim(contrib_Repub_dag_515)[1]
+J=7
+mav=as.numeric(L)
+for(k in 1:L){
+  if(k< (J+1)){q=seq(1,k)
+  mav[k]=sum(contrib_Repub_dag_515$daily_sum[q])/sum(contrib_Repub_dag_515$n[q])}
+  else {q=seq(k-J+1,k)
+    mav[k]=sum(contrib_Repub_dag_515$daily_sum[q])/sum(contrib_Repub_dag_515$n[q])}
+}
+
+contrib_Repub_dag_515$mav=mav
+head(contrib_Repub_dag_515,7)
+```
+
+
+
+
+```{r republican TS , echo=FALSE}
+#ggplot(data=contrib_Repub_dag_515, aes(x=date, y=mav))+
+#  geom_line()+
+#  scale_x_date(date_labels= "%b %Y", breaks=as.Date(c("2015-6-01", "2015-11-01", #"2016-02-01", "2016-05-15","2016-08-01","2016-11-07"))) +
+#  xlab("day") + ylab("moveing average daily contribution")
+
+
+```
+
+
+```{r contributions aggregated by date after Apr 2015, echo=FALSE }
+# My goal now is to generalize the above
+
+# first, I aggregate over dates and party
+contrib_dag <- group_by(contrib, contb_date,cand_party) %>%
+  summarise(daily_sum = sum(contb_amt),
+            n=n())%>%
+  arrange(contb_date)
+#head(contrib_dag)
+
+# consider contriutions only after May 1st 2015
+contrib_dag_515 = subset(contrib_dag, contb_date > as.Date("2015-04-30") )
+#head(contrib_dag_515)
+
+# we apply the moving avarage to  each party separately
+# here we split each party in one data frame
+contrib_dag_515_R = subset(contrib_dag_515, cand_party == 'Republican')
+contrib_dag_515_D = subset(contrib_dag_515, cand_party == 'Democrat')
+contrib_dag_515_L = subset(contrib_dag_515, cand_party == 'Liberterian')
+contrib_dag_515_G = subset(contrib_dag_515, cand_party == 'Green')
+contrib_dag_515_I = subset(contrib_dag_515, cand_party == 'Independent')
+
+# computing the moving average of length J
+moving_avg <- function(df,J){
+  #J is average length
+  L=dim(df)[1]
+  mav=as.numeric(L)
+  for(k in 1:L){
+    # avering the first few days lless than J+1
+    if(k< (J+1)){q=seq(1,k)
+    mav[k]=sum(df$daily_sum[q])/sum(df$n[q])}
+    # averaging after the first J days
+    else {q=seq(k-J+1,k)
+      mav[k]=sum(df$daily_sum[q])/sum(df$n[q])}
+  }
+  return(mav)
+}
+
+# applying the moving average function for each party
+contrib_dag_515_R$mav <- moving_avg(contrib_dag_515_R,7)
+contrib_dag_515_D$mav <- moving_avg(contrib_dag_515_D,7)
+contrib_dag_515_L$mav <- moving_avg(contrib_dag_515_L,7)
+contrib_dag_515_G$mav <- moving_avg(contrib_dag_515_G,7)
+contrib_dag_515_I$mav <- moving_avg(contrib_dag_515_I,7)
+
+
+#head(contrib_dag_515,7)
+
+# now we comine them all in one data frame
+contrib_dag_515_all = rbind(contrib_dag_515_R,contrib_dag_515_D, 
+                            contrib_dag_515_L, 
+                            contrib_dag_515_G, contrib_dag_515_I)
+```
+
+
+```{r plot averaged daily contributions all parties, echo=FALSE, warning=FALSE}
+ggplot(data=contrib_dag_515_all, aes(x=contb_date, y=mav))+
+  geom_line(aes(color=cand_party),size=1)+ 
+  scale_color_manual(values = c("Democrat" = 'blue',"Republican"='red',
+                                "Liberterian" = 'brown', 'Green'='green',
+                                'Independent' = 'yellow'))+
+  scale_x_date(date_labels= "%b %Y", breaks=as.Date(c("2015-6-01", "2015-11-01", "2016-02-01", "2016-05-15","2016-08-01","2016-11-07"))) +
+  xlab("Time (days by date)") + ylab("moveing average daily contribution")+
+  ggtitle('Seven day moving average of the daily contributions')
+
+
+```
+
+Observe the huge spike for the Democrats, in May 2015, and for the Libertarian in February and May of 2016. We recall that the frequency of contributions were low in May and June  2015, thus these spikes for the Democrats are more likely due to large amounts and not many small amount that would have averaged there effect out.   We also observe the huge drop for the Republicans, reflecting huge refund. This coincides with Cruz dropping out of the race. On average we see that the daily contributions of the Republicans and Democrats are similar from August 2015 to August 2016.
+
+We zoom -in on the period between 1 Jun 2016 and 25 Dec 2016, to look more closely on what went on during that time period. 
+
+
+```{r plot averaged daily contributions all parties zoom-in, warning=FALSE, echo=FALSE}
+ggplot(data=contrib_dag_515_all, aes(x=contb_date, y=mav))+
+  geom_line(aes(color=cand_party),size=1)+ 
+  scale_color_manual(values = c("Democrat" = 'blue',
+                                "Republican"='red',
+                                "Liberterian" = 'brown', 
+                                'Green'='green',
+                                'Independent' = 'yellow'))+
+  scale_x_date(date_labels= "%b %Y", 
+               limits = as.Date(c("2016-06-01","2016-12-25")),
+               breaks=as.Date(c("2016-6-01",
+                                "2016-07-01", "2016-08-01", "2016-09-01","2016-10-01","2016-11-01","2016-12-01"))) +
+  xlab("Time (days by date)")+ ylab("moveing average daily contribution")+ 
+  ggtitle('Seven day moving average of daily contributions',
+           'between Jun 1, 2016 and Dec 25, 2016')
+
+
+
+```
+
+
+We see the 7 day moving average picked up for democrats between Aug and Nov, 
+then came the refunds surge after the elections. For the republicans the average contributions seems stable up to elections day followed by refunds. 
+The Green party seems to be stable with more contributions after the elections, 
+the only party to have experienced this. The Libertarian party had the highest contributions up to September, then slowed down, but no refund after elections. The Independent candidate starts receiving considerable contributions in August up to elections, but no refunds.
+
+In the graph below we look at each party separately.
+
+```{r warning = FALSE, echo=FALSE}
+ggplot(data=contrib_dag_515_all, aes(x=contb_date, y=mav))+
+  geom_line(aes(color=cand_party),size=1) +
+  scale_color_manual(values = c("Democrat" = 'blue',
+                                "Republican"='red',
+                                "Liberterian" = 'brown', 
+                                'Green'='green',
+                                'Independent' = 'yellow'))+
+  scale_x_date(date_labels= "%m-%y", 
+               limits = as.Date(c("2015-06-01","2016-12-25")),
+               breaks=as.Date(c("2015-7-01", "2015-12-01",
+                                "2016-05-15","2016-11-07"))) +
+  xlab("Time (days by date)") + ylab("moveing average daily contribution")+
+  ggtitle('Seven day  amoving average of daily contributions')+
+  facet_wrap(~cand_party)
+```
+
+I am curious about refund dates of the two major parties
+```{r dates of refund for the Democratic party}
+contrib_Dem.df$date[contrib_Dem.df$amount<=0]
+```
+
+We see that for the Democrats, refunds came after election day
+
+
+```{R dates of refund for the republican party}
+contrib_Repub.df$date[contrib_Repub.df$amount<=0]
+```
+
+For Republicans, refunds were at various times. Some as early as March 2015. Some even earlier in October 2013.
+
+
+Now we turn attention to interaction between contributed amounts, party and population. 
+
+
+
+```{r aggregate contributions by City and cand_party, echo=FALSE}
+
+contb_by_city_party <- group_by(subset(contrib,contb_amt>0), 
+                                cand_party, city,type,
+                                population,lon,lat) %>%
+  summarise(amt_mean = mean(contb_amt),
+            amt_median = median(contb_amt),
+            total_amt = sum(contb_amt),
+            n=n()) %>%
+  arrange(type)
+#head(contb_by_city_party,10)
+```
+
+```{r plotting 8, echo=FALSE }
+ggplot(data=subset(contb_by_city_party, 
+                   population<500000), 
+        aes(x=population,y=amt_median))+
+  geom_point(data=subset(contb_by_city_party,
+                         population<500000), alpha=0.3,
+             aes(color=cand_party), 
+             position= position_jitter(h=0)) +
+  scale_color_manual(values = c("Democrat" = 'blue',
+                                "Republican"='red',
+                                "Liberterian" = 'brown', 
+                                'Green'='green',
+                                'Independent' = 'yellow')) +
+  ylab("median contributed amount") + xlab('population') +
+  ggtitle('Median contributed amount against population size')
+```
+
+The Republican red contributions overlaps the Democrat blue marker, so we need
+a better view by using the log scale.
+
+Observe the high median contribution to the Green party.
+
+```{r plotting 9, , echo=FALSE}
+ggplot(data=subset(contb_by_city_party, 
+                   population<500000 & population >0),
+       aes(x=population,y=amt_median)) +
+  geom_point(data=subset(contb_by_city_party, 
+                         population<500000 & population >0),
+             alpha=0.3, aes(color=cand_party),
+             position= position_jitter(h=0.1)) +
+  scale_x_log10(breaks=c(10,200,400,1000,4000,
+                         10000,20000,50000)) +
+  scale_y_log10(breaks=c(5,10,25,50,100,200,500,1000)) +
+  scale_color_manual(values = c("Democrat" = 'blue',
+                                "Republican"='red',
+                                "Liberterian" = 'brown', 
+                                'Green'='green',
+                                'Independent' = 'yellow')) +
+  ylab("Median contributed amount (log scale)") + xlab('Population (log scale)')+
+  ggtitle("Median contributed amount versus population of place of origin 
+    excluding Chicago")
+```
+
+
+Here we see that the Democrats and Republicans had contributions from all place sizes
+across the board. We also see that the Democrat median contributions are smaller than that of the Republicans. The Republican median is mostly less than the Green and Libertarian. Also observe, contributions to the  Democrats from places that are over 4000 in size tend to be small. 
+
+Notice the Green and Libertarian show more for cities with size 400 or larger.
+
+Obviously there is no association between population size and the median contributed amount.
+Therefore, I would like to find a least square regression model using party and the logarithm of population to predict the logarithm of total contributions from a place with a given population. First, lets look at the following plot:
+
+```{r plotting 10, , echo=FALSE}
+ggplot(data=subset(contb_by_city_party, 
+                   population<500000 & population >0),
+       aes(x=population,y=total_amt, color= cand_party)) +
+  geom_point(data=subset(contb_by_city_party, 
+                         population<500000 & population >0),
+             alpha=0.3, aes(color=cand_party),
+             position= position_jitter(h=0.1)) +
+  geom_smooth(se=FALSE,method='lm') +
+  scale_x_log10(breaks=c(10,200,400,1000,4000,
+                         10000,20000,50000)) +
+  scale_y_log10(breaks=c(5,10,25,50,100,200,500,1000)) +
+  scale_color_manual(values = c("Democrat" = 'blue',
+                                "Republican"='red',
+                                "Liberterian" = 'brown', 
+                                'Green'='green',
+                                'Independent' = 'yellow')) +
+  ylab("Total  contributed amount (log scale)") + xlab('Population (log scale)')+
+  ggtitle("Total contributed amount versus population of place of origin 
+    excluding Chicago both on logarithmic scale ")
+```
+
+The plot suggests that the slopes of the lines depend on the party. Notice how the Democrats' slope just slightly higher than  the Republicans'; while the others have much smaller slopes and all three are different. Therefor when we model, we choose to consider the interaction terms only. 
+
+
+Recall in the previous section we also found a strong association with the number of contributions per place. We want to explore the interaction with parties.
+
+```{r plotting 10 number contrbutions, total amt, , echo=FALSE}
+ggplot(data=subset(contb_by_city_party, 
+                   population<500000 & population >0),
+       aes(x=n,y=total_amt, color= cand_party)) +
+  geom_point(data=subset(contb_by_city_party, 
+                         population<500000 & population >0),
+             alpha=0.3, aes(color=cand_party),
+             position= position_jitter(h=0.1)) +
+  geom_smooth(se=FALSE,method='lm') +
+  scale_x_log10(breaks=c(1,2,3,5,10,30, 50, 100, 200,400,1000,4000,
+                         10000,20000,50000)) +
+  scale_y_log10(breaks=c(5,10,25,50,100,200,500,1000, 3000, 
+                         5000, 10000, 30000,100000,300000,1000000)) +
+  scale_color_manual(values = c("Democrat" = 'blue',
+                                "Republican"='red',
+                                "Liberterian" = 'brown', 
+                                'Green'='green',
+                                'Independent' = 'yellow')) +
+  ylab("Total  contributed amount (log scale)") +
+  xlab('Number of contrbutions (log scale)') +
+  ggtitle("Total contributed amount versus number of contributions of place of origin 
+    excluding Chicago both on logarithmic scale ")
+```
+
+This plot shows only the Democrats have large number of contributions (over 1000). Most contributions to the Democrats where more than 10 per place. The Republicans got more amounts from fewer places when the number of contributions where at least 10. But when contributions per place where less than 10 there is quite variability in the contributions. None-major parties got at most 30 contributions per place.
+
+
+We are now ready to find a linear regression fit for the interaction of population size and number of contributions with parties. All  continuous variables are log transformed.
+
+```{r linear model log amt, log popul, log n, echo=FALSE}
+#summary(lm(log10(contb_amt) ~ log10(population) + cand_party, 
+#           data=subset(contrib, (population >0 & contb_amt>0))))
+
+summary(lm(log10(total_amt)~log10(population):cand_party + log10(n):cand_party,
+           data = subset(contb_by_city_party,(population >0))))
+
+```
+
+The R-squared value reflects the model explains most of the variability in the total contributed amount at the log scale. Notice however, that population size for the Democrats and the Republican is not a significant factor as much as the number of contributions. While for the none-major parties both are important.
+
+
+
+Next we look at spatial distribution for contributions above 100 dollars. 
+
+```{r cities where median contribution exceeds 100 dollars, echo=FALSE}
+# plotting a map showing cities in Illinois where 
+# the median contirbution exceeds 100
+# and colored by party.
+
+ggplot(data=subset(contb_by_city_party,(lon != 0)& 
+                     (amt_median > 100)), 
+       aes(x=lon, y=lat))+  
+  geom_point(data=subset(contb_by_city_party,(lon != 0)
+                         &(amt_median>100)), 
+             alpha=0.7, aes(color=cand_party), 
+             position= position_jitter(h=0.1)) + 
+  scale_color_manual(values = c("Democrat" = 'blue',
+                                "Republican"='red',
+                                "Liberterian" = 'brown', 
+                                'Green'='green',
+                                'Independent' = 'yellow')) +
+  coord_map() + geom_path( data=map_IL, aes(x=long, y=lat))+
+  ggtitle('Distribution of places where contributions originate',
+          'with median contribution over $100')
+  
+```
+
+Observe the concentration in the north east, near Chicago area, for the Republican contributions
+and the Green contributions. Otherwise, the  distribution is  uniformly spread out for the  all others, fewer Democrats than Republicans.  
+
+
+
+Lets look at small contribution distribution by party
+```{r  map 1, echo=FALSE}
+ggplot(data=subset(contb_by_city_party,(lon != 0)& 
+                     (amt_median < 25)), 
+       aes(x=lon, y=lat))+  
+  geom_point(data=subset(contb_by_city_party,(lon != 0)
+                         &(amt_median<25)), 
+             alpha=0.5, aes(color=cand_party),
+             position= position_jitter(h=0.1)) + 
+  scale_color_manual(values = c("Democrat" = 'blue',
+                                "Republican"='red',
+                                "Liberterian" = 'brown', 
+                                'Green'='green',
+                                'Independent' = 'yellow')) +
+  coord_map() + geom_path( data=map_IL, aes(x=long, y=lat))+
+  ggtitle('Distribution of places where contributions originate',
+          'with median contribution less than $25')
+  
+  
+```
+
+
+Now we see that most of these are for Democrats coming from the north east area which is highly populated. Small Republican contributions come of all over the state too but
+with less intensity. 
+
+```{r grouping  by median , echo=FALSE}
+# I want to group by median based on cuts at 25, 100, 200
+contb_by_city_party$median_bucket <- cut(contb_by_city_party$amt_median,
+                                         c(0,25,100,200,5400))
+
+```
+
+
+```{r maps within buckets, echo = FALSE}
+ggplot(data=subset(contb_by_city_party,(lon != 0)), 
+       aes(x=lon, y=lat))+  
+  geom_point(data=subset(contb_by_city_party,(lon != 0)), 
+             alpha=0.5, aes(color=cand_party), 
+             position= position_jitter(h=0.1)) + 
+  scale_color_manual(values = c("Democrat" = 'blue',
+                                "Republican"='red',
+                                "Liberterian" = 'brown', 
+                                'Green'='green',
+                                'Independent' = 'yellow')) +
+  coord_map() + geom_path( data=map_IL, aes(x=long, y=lat)) +
+  facet_wrap(~median_bucket, nrow=1) +
+  ggtitle("Distribution of contributions with increasing median brackets ")
+
+```
+
+we see here the domination of Democrats in the first bracket, the Republican in the second
+we see more of the Green and the Libertarian in the upper brackets around larger cities in the north east region and other larger cities in the south , south west, and center slab. 
+
+#Final plots and Summary:
+
+If I have to choose only three plots to highlight the findings of this data, I would necessarily choose a plot that reflects the frequency of contributions to candidates in the two elections types the primaries and the general. Specially in the 2016 elections, most people were favoring Sanders over Clinton for example but the party establishment pushed for Clinton instead. 
+
+I also want a plot that summarizes amount contributed to each party, this is the box plot. 
+
+The Third plot should be multivariate that reflects amounts contributed, parties and either time, population size, number of contributions or spatial distribution. I decided to go with time because it says something about the supporter's response with time. 
+
+If I would choose a forth one I would choose the spacial distribution at four different brackets of amounts.In particular this plot shows how uniform is the support for Democrats and Republicans throughout the state with contributions dominated by the (0, 25], (25,100] brackets.
+
+
+### Plot One
+
+```{r bar chart of contribution type- final , echo= FALSE}
+ggplot(data=IL.presContr, aes(cand_last_nm))+ 
+  geom_bar(aes(fill=election_tp), position = position_stack(reverse = TRUE))+
+  coord_flip() +
+  ggtitle("Frequency of contributions for each candidate in each election type",
+          "specially primary and general elections")
+
+```
+
+ 
+ 
+Here You see that most contributions went to Clinton and Sanders. Sanders had more contributions before the primaries. Among the Republicans,Trump and Cruz  got the most contributions. Even though the number of contributions to Clinton increased after the primary assuming that she got some from Sanders supporter. We do not see this for Trump.
+The number of contribution to Trump stayed the same. 
+
+The number of contributions to the other none-major party candidates barely if any show up.
+Their numbers are very meager. 
+
+### Plot Two
+```{r box-plot by party log scale Final, echo=FALSE}
+ggplot(data = subset(contrib,contb_amt>0.01), aes(cand_party, contb_amt)) + 
+  geom_boxplot() + xlab('Party') + ylab('Contrbutions (log scale)')+
+  stat_summary(fun.y = "mean", geom = "point", shape = 4)+
+  scale_y_log10(breaks=c(0,0.5, 1,2,3,5, 10,25,50,75,100,
+                         200,500,1000,2000, 5000,10000))+
+  ggtitle("Box-plots summarizing contribution amounts for each party ")
+```
+
+This box plot shows the general trend in contributions for each party. We observe that 
+the Democratic party had the smallest median contributions. People contributed with as little as few cents it seems. But the Democrats also got some contributions over \$1000 with a maximum of \$5400. The bulk of their finance was contributions less than \$50. 
+
+Contributions to the Republican party where larger. The bulk of their share of  contributions where between \$50 and \$100. The maximum they got was \$10800. 
+
+The Green party had their bulk of their contributions between \$30 and \$200, while the Libertarian party had it between \$50 and \$200. 
+
+The Independent candidate had their bulk of contributions between \$25 to \$200. 
+
+We carried an ANOVA test that showed that the means among the parties are statistically different. We followed this by Tukey's procedure to find that the Democrat's mean is statistically lower than all the other parties. we also see that the Green and Libertarian means are not statistically different. The Independent candidate is not statistically different from the other parties except the Democrats. 
+
+### Plot Three 
+
+```{r moving average of daily contrbutions by part -final, echo=FALSE}
+ggplot(data=contrib_dag_515_all, aes(x=contb_date, y=mav)) +
+  geom_line(aes(color=cand_party),size=1)+ 
+  scale_color_manual(values = c("Democrat" = 'blue',"Republican"='red',
+                                "Liberterian" = 'brown', 'Green'='green',
+                                'Independent' = 'yellow'))+
+  scale_x_date(date_labels= "%b %Y", breaks=as.Date(c("2015-6-01", "2015-11-01", "2016-02-01", "2016-05-15","2016-08-01","2016-11-07"))) +
+  xlab("day") + ylab("average daily contribution") +
+  ggtitle("Seven day moving average of daily contrbutions for each party ")
+
+
+```
+
+This plot shows contributions over time for each party. Notice that for the Democrats and Republicans, they received large amounts of contributions in June 2015, this is then followed by persistent stream of small contributions. The Democrats had an uptake near the general
+elections. Both parties were asked for refunds after the general elections.
+
+The Libertarian party had their peak contributions in February and May and in general their average contributions where higher than any other party. 
+
+The Green party had no significant peak contributions, but two  plateaus. The first
+form July 2015 to Dec 2015 is higher than the second from Dec 2015 to Jun 2016.
+Afterwards, pick up again till September 2016 and again after the elections are over. 
+
+The Independent candidate, started receiving contributions in August 2016. At this time
+the contributions where maximum and then start to decrease until the election day. 
+
+# Reflections:
+
+In analyzing the Illinois contributions to the 2016 presidential elections, we found that
+the front runners in the Democratic party are Clinton and Sanders, among the Republican 
+party are Cruz and Trump, with Carson and Rubio trailing behind. In much smaller numbers, there was support to the Green party and the Libertarian party as well as to the independent candidate. However overall most contributions went to the Democrats. 
+Sanders had more supporters contributing to campaign before the primary elections. However, 
+Clinton who is better known in Illinois, had more influence in general, plus being a woman
+with the prospect that she would be the first women president had lead I think to
+her receiving more contributions. 
+
+
+I chose to ignore the gender factor in this analysis. First, there are only three women.
+Two of them are leading in their own party and one of the two is well known. As I mentioned above, for Clinton both her gender and influence together played a major role in supporting her.
+
+
+Contributions to the major parties tend to be small. However, we find that 
+the variability is wider among the Republican supporters than Democrats. 
+Supporters of non-major parties realized the need for larger 
+contributions since these parties have low membership. The same applies to the independent
+candidate.
+
+Contributions over time also varies. At the time when any of the parties 
+starts receiving contributions, the average contributions are the highest, 
+then tend to drop slightly and stabilize for a while. Some of the Republican's 
+and the Democrat's contributions were refunded after the elections in November.
+The Green party is the only party that continued to gain contributions after 
+the elections.
+
+The population size of the city where the contribution originated, does not correlate with
+the average contribution be it mean or median. However we see that places with small
+population (less than 4000) show higher variability some small and some large 
+contributions. We also notice that many contributions for the Green and Libertarian 
+parties  came from larger cities. 
+
+Obviously one would expect the number of contributions from a city will have an influence on the total contributions from that city, but not the median amounts.
+
+We found that population size was not an important factor for the Democrats and Republicans in determining that total contributions from a particular place as much as the number of contributions from that place. For the none-major parties however, both factors were important, since they had much lower number of contributions mainly from high populated cities.
+
+The spatial distribution of the contribution over the state do show first that they 
+are not localized, there are uniformly distributed. However, when we take the median
+amount of the contributions we see complete agreement with box-plots of amounts contributed across parties.For up to $25 contributions are mainly  for Democratic candidate, 
+between \$25 and \$100 contributions are mainly  for a Republican candidate.
+Contributions for the non-major parties show up when the median contribution exceed 
+\$100. 
+
+On the map I wish I could include the population size of the location of contribution. 
+But I think will over crowd the map between color for party and size of the location. 
+
+
+Given my understanding of what goes in election public financing, I would be curious about
+how residents of Illinois contributed in past elections, how will they contribute in
+the next election in 2020. In particular, since there is disappointment with major parties leadership, one would be interested to see how attitude and contributions towards non-major parties will change if any.
+
+Moreover, I ask whether contributions to gubernatorial elections 2018 will be similar or drastically different from presidential elections. This is because Illinois is leaning towards Democrats while the current Illinois governor is Republican. Of course there is context to this result in past gubernatorial elections yet one would wonder what happened on the contributions part of the story. 
+
