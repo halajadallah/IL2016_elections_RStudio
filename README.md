@@ -27,8 +27,21 @@ The variables that I selected and performed analysis on are:
 As part of the analysis I introduced the candidate's party as a variable of interest.
 
 Some highlights of the explorations:
+* Most contributions towards the primaries went to Sanders, followed by Clinton followed by Cruz, Trump
+ <img src='plot_one.PNG'>
+ 
+* Contributions to the major parties tend to be small. However, we find that the variability is wider among the Republican supporters than Democrats. Supporters of non-major parties realize the need for larger contributions since these parties have low membership. The same applies to the independent candidate.
+* Contributions to Democrat's candidate are mostly less than or equal to \$50. 
 
-* Contributions to Democrat's candidate tend to be less than or equal \$25. 
-* Most parties had refunds after the general elections expect for the Green party which continued to receinve contributions.
+<img src='plot_two.PNG'>
+
+* Contributions over time also varies. At the time when any of the parties starts receiving contributions, the average contributions are the highest, then tend to drop slightly and stabilize for a while. 
+* Some of the Republican and Democrats contributions were refunded after the elections in November. A large refund was issued after Cruz dropped out the race in May 2016. 
+* The Green party is the only party that continued to gain contributions after the elections.
+<img src='plot_three.PNG'>
+
+
 * Individual contributions where uniformly distributed geographically (by visual inspection)
-* Large contributions seem to come from rural places. 
+* Large contributions seem to come from rural places.The Green party is an exception where most large contirbution came from the north east (chicago area).  
+ <img src='plot_four.PNG'>
+
